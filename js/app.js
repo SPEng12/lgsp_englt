@@ -51,7 +51,7 @@ const TENANT_DISPLAY_MAPPING = {
     "LGD": "LG디스플레이", 
     "LGIT": "LG이노텍", 
     "LGC_D22": "LG화학_D22",
-    "LGC": "LG화학_E6,E8", 
+    "LGC": "LG화학", 
     "LGHH": "LG생활건강", 
     "LGU": "LG유플러스", 
     "CNS": "LG씨앤에스", "LGCS": "LG화학_E5,E7", 
