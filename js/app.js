@@ -42,7 +42,7 @@ const Icons = {
     Calendar: (p) => <LucideIcon name="Calendar" {...p} />,
     Layers: (p) => <LucideIcon name="Layers" {...p} />,
     CloudSun: (p) => <LucideIcon name="CloudSun" {...p} />,
-    Grid: (p) => <LucideIcon name="Grid" {...p} />, // Group Icon added
+    Grid: (p) => <LucideIcon name="Grid" {...p} />,
 };
 
 // --- Constants ---
@@ -55,7 +55,7 @@ const DATA_TYPES = [
     { id: 'tCO2', label: '온실가스', unit: 'tCO2' }
 ];
 
-// --- Tenant Mapping & Groups (New Feature) ---
+// --- Tenant Mapping & Groups ---
 const TENANT_MAPPING = {
     "CNS": "LG씨앤에스",
     "LGC": "LG화학",
@@ -67,7 +67,7 @@ const TENANT_MAPPING = {
     "LGU": "LG유플러스",
     "LXH": "LX하우시스",
     "LXG": "LX글라스",
-    "LGIT": "LG이노텍" // Added for completeness
+    "LGIT": "LG이노텍"
 };
 
 const TENANT_GROUPS = {
@@ -76,10 +76,10 @@ const TENANT_GROUPS = {
 };
 
 const COLORS = { 
-    prev: "#94a3b8", // Slate 400
-    curr: "#881337", // Dark Rose
-    currHighlight: "#e11d48", // Bright Rose (Latest)
-    projected: "#f59e0b", // Amber 500
+    prev: "#94a3b8", 
+    curr: "#881337", 
+    currHighlight: "#e11d48", 
+    projected: "#f59e0b", 
     mix: ["#A50034", "#F97316", "#3B82F6", "#10B981", "#6366F1"] 
 };
 
@@ -88,6 +88,10 @@ const getUnit = (dataType, source) => {
     if (dataType === 'Cost') return '원';
     if (dataType === 'TOE') return 'TOE';
     if (dataType === 'tCO2') return 'tCO2';
+    
+    // Usage 탭일 때, '전체'를 선택하면 합산값은 TOE로 표현 (에너지 합계와 동일)
+    if (dataType === 'Usage' && source === '전체') return 'TOE';
+
     if (source === '전력') return 'kWh';
     if (source === '중온수') return 'MWh';
     if (['도시가스', '상하수도', '재이용수'].includes(source)) return 'm³';
@@ -99,6 +103,7 @@ const formatValue = (val, dataType) => {
     if (dataType === 'Cost') {
         return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(val);
     }
+    // 값이 작으면(TOE 등) 소수점 보여주기
     const digits = Math.abs(val) < 1000 ? 1 : 0;
     return new Intl.NumberFormat('ko-KR', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(val);
 };
@@ -195,7 +200,7 @@ function EnergyDashboard() {
         return "기타";
     };
 
-    // --- Core Parsing Logic (Updated with Mapping) ---
+    // --- Core Parsing Logic ---
     const processExcelData = (arrayBuffer) => {
         try {
             const wb = XLSX.read(arrayBuffer, { type: 'array' });
@@ -280,6 +285,7 @@ function EnergyDashboard() {
                             if (isNaN(val)) val = 0;
 
                             bData[buildingName][dataType][sourceType][m][yearKey] += val;
+                            // Pre-calculate raw total (will be overridden for Usage->TOE calc)
                             bData[buildingName][dataType]['전체'][m][yearKey] += val;
                         }
                     }
@@ -310,24 +316,14 @@ function EnergyDashboard() {
                 }
             }
 
-            [bData, tData].forEach(dataSet => {
-                Object.values(dataSet).forEach(entityTypes => {
-                    Object.values(entityTypes).forEach(srcObj => {
-                        Object.values(srcObj).forEach(monthArr => {
-                            monthArr.forEach(d => {
-                                d.diff = d.curr - d.prev;
-                                d.projected = null; 
-                            });
-                        });
-                    });
-                });
-            });
-
             setYears({ prev: yPrev, curr: yCurr });
             setBuildingData(bData);
             setTenantData(tData);
+            
+            // Initial State: Select All Tenants
             setViewMode('Tenant'); 
-            setSelectedEntities([]); 
+            const allTenants = Object.keys(tData).sort();
+            setSelectedEntities(allTenants); 
             
             setIsFileUploaded(true);
             setLoading(false);
@@ -390,22 +386,14 @@ function EnergyDashboard() {
         setSelectedEntities(selectedEntities.length === allKeys.length ? [] : allKeys);
     }
 
-    // --- Group Toggle Logic ---
     const toggleGroup = (groupName) => {
         const targetMembers = TENANT_GROUPS[groupName];
         if (!targetMembers || !activeData) return;
-
-        // activeData에 실제로 존재하는 멤버만 필터링
         const validMembers = targetMembers.filter(m => activeData[m]);
-        
-        // 현재 그룹 멤버들이 모두 선택되어 있는지 확인
         const allSelected = validMembers.every(m => selectedEntities.includes(m));
-
         if (allSelected) {
-            // 모두 해제
             setSelectedEntities(prev => prev.filter(e => !validMembers.includes(e)));
         } else {
-            // 모두 선택 (합집합)
             setSelectedEntities(prev => [...new Set([...prev, ...validMembers])]);
         }
     };
@@ -423,7 +411,15 @@ function EnergyDashboard() {
         selectedEntities.forEach(entity => {
             const data = activeData[entity];
             if (!data) return;
-            const targetArr = data[selectedDataType][selectedSource];
+
+            // --- Logic Update: If Usage & Total -> Use the value from 'TOE' '전체' ---
+            let targetArr;
+            if (selectedDataType === 'Usage' && selectedSource === '전체') {
+                targetArr = data['TOE']['전체']; // Use existing TOE Total data
+            } else {
+                targetArr = data[selectedDataType][selectedSource];
+            }
+
             if (targetArr) {
                 targetArr.forEach((d, idx) => {
                     agg[idx].prev += (d.prev || 0);
@@ -432,6 +428,7 @@ function EnergyDashboard() {
             }
         });
 
+        // Prediction Logic
         let lastActualIdx = -1;
         agg.forEach((d, i) => { if (d.curr > 0) lastActualIdx = i; });
         
@@ -479,13 +476,24 @@ function EnergyDashboard() {
         if (!activeData || selectedEntities.length === 0 || selectedSource !== '전체') return null;
         const sourceKeys = ["전력", "도시가스", "중온수", "상하수도", "재이용수"];
         const result = sourceKeys.map(key => ({ name: key, value: 0 }));
+        
         selectedEntities.forEach(entity => {
             const data = activeData[entity];
             if(!data) return;
+            
             sourceKeys.forEach((key, idx) => {
-                const arr = data[selectedDataType][key];
-                const val = arr.reduce((a,c) => a + (c.curr || c.projected || 0), 0);
-                result[idx].value += val;
+                // If Usage & Total -> We want the mix to reflect the TOE breakdown
+                // so we fetch the TOE values for each source (which should exist in the dataset)
+                let effectiveDataType = selectedDataType;
+                if (selectedDataType === 'Usage' && selectedSource === '전체') {
+                    effectiveDataType = 'TOE';
+                }
+
+                const arr = data[effectiveDataType][key];
+                if (arr) {
+                    let val = arr.reduce((a,c) => a + (c.curr || c.projected || 0), 0);
+                    result[idx].value += val;
+                }
             });
         });
         return result.filter(d => d.value > 0);
@@ -540,19 +548,29 @@ function EnergyDashboard() {
             if (!data) return;
             let totalPrev = 0;
             let totalCurr_proj = 0;
-            const targetArr = data[selectedDataType][selectedSource];
             
-            targetArr.forEach(d => {
-                totalPrev += (d.prev || 0);
-                totalCurr_proj += (d.curr || 0) + (d.projected || 0);
-            });
-            if (totalCurr_proj > 0) {
-                const rate = totalPrev ? (totalCurr_proj - totalPrev) / totalPrev : 0;
-                list.push({ 
-                    name: key, 
-                    size: totalCurr_proj, 
-                    rate: rate 
+            // Logic Update: If Usage & Total -> Use 'TOE' '전체' data
+            let targetArr;
+            if (selectedDataType === 'Usage' && selectedSource === '전체') {
+                targetArr = data['TOE']['전체'];
+            } else {
+                targetArr = data[selectedDataType][selectedSource];
+            }
+
+            if (targetArr) {
+                targetArr.forEach(d => {
+                    totalPrev += (d.prev || 0);
+                    totalCurr_proj += (d.curr || 0) + (d.projected || 0);
                 });
+
+                if (totalCurr_proj > 0) {
+                    const rate = totalPrev ? (totalCurr_proj - totalPrev) / totalPrev : 0;
+                    list.push({ 
+                        name: key, 
+                        size: totalCurr_proj, 
+                        rate: rate 
+                    });
+                }
             }
         });
         return list.sort((a,b) => b.size - a.size);
@@ -628,14 +646,13 @@ function EnergyDashboard() {
                 {/* Entity List */}
                 <div className="flex-1 overflow-y-auto px-4 pb-4 custom-scrollbar space-y-1">
                     
-                    {/* --- Group Selection Section (Only for Tenant Mode) --- */}
+                    {/* --- Group Selection Section --- */}
                     {isSidebarOpen && viewMode === 'Tenant' && (
                         <div className="mb-4 space-y-2 pb-4 border-b border-slate-200 dark:border-slate-800">
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1 mb-2">그룹 선택</p>
                             {Object.keys(TENANT_GROUPS).map(groupName => {
-                                // Calculate selection state
                                 const members = TENANT_GROUPS[groupName].filter(m => entityList.includes(m));
-                                if (members.length === 0) return null; // Hide empty groups
+                                if (members.length === 0) return null; 
                                 const allSelected = members.every(m => selectedEntities.includes(m));
                                 
                                 return (
@@ -847,7 +864,16 @@ function EnergyDashboard() {
                                     <div className="flex-1 min-h-[250px] relative">
                                         <ResponsiveContainer width="100%" height="100%">
                                             <PieChart>
-                                                <Pie data={mixData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                                                <Pie 
+                                                    data={mixData} 
+                                                    cx="50%" 
+                                                    cy="50%" 
+                                                    innerRadius={55} 
+                                                    outerRadius={75} 
+                                                    paddingAngle={5} 
+                                                    dataKey="value"
+                                                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(1)}%`}
+                                                >
                                                     {mixData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS.mix[index % COLORS.mix.length]} />)}
                                                 </Pie>
                                                 <Tooltip formatter={(val)=>formatValue(val,selectedDataType)} />
