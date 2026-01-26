@@ -41,41 +41,24 @@ const Icons = {
     Map: (p) => <LucideIcon name="Map" {...p} />,
     Calendar: (p) => <LucideIcon name="Calendar" {...p} />,
     Layers: (p) => <LucideIcon name="Layers" {...p} />,
+    CloudSun: (p) => <LucideIcon name="CloudSun" {...p} />,
 };
 
-// --- Data & Constants ---
-const BUILDING_LIST = ["DP2", "DP3_CA", "LGC_DP3", "LGC_D22", "CNS_D22", "CNS_D25", "D22_CA", "D25_CA", "ISC", "SLC", "LGD", "LXH", "LGIT", "LGES", "LGCS", "LGHH", "LGU", "LXG", "DP2_2단계"];
-
-const TENANT_DISPLAY_MAPPING = { 
-    "LGE": "LG에너지솔루션", "LGES": "LG에너지솔루션", 
-    "LGD": "LG디스플레이", 
-    "LGIT": "LG이노텍", 
-    "LGC_D22": "LG화학_D22",
-    "LGC": "LG화학", 
-    "LGHH": "LG생활건강", 
-    "LGU": "LG유플러스", 
-    "CNS": "LG씨앤에스", "LGCS": "LG씨앤에스", 
-    "LXH": "LX하우시스", 
-    "LXG": "LX글라스", 
-    "LGE_DP3": "LG전자_DP3", 
-    "DP3_CA": "DP3_공용", "D22_CA": "D22_공용", "D25_CA": "D25_공용" 
-};
-
-const TENANT_GROUPS = {
-    "DP3": ["LG디스플레이", "LG에너지솔루션", "LG이노텍", "LG화학", "LX글라스", "LX하우시스", "LG전자_DP3"],
-    "D22/D25": ["LG생활건강", "LG씨앤에스", "LG유플러스", "LG화학_D22"]
-};
-
+// --- Constants ---
 const MONTHS = ["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"];
 const SOURCES = ["전체", "전력", "도시가스", "중온수", "상하수도", "재이용수"];
-const DATA_TYPES = [{ id: 'Cost', label: '비용', unit: '원' }, { id: 'Usage', label: '사용량', unit: 'Usage' }, { id: 'TOE', label: '에너지', unit: 'TOE' }, { id: 'tCO2', label: '온실가스', unit: 'tCO2' }];
+const DATA_TYPES = [
+    { id: 'Cost', label: '비용', unit: '원' }, 
+    { id: 'Usage', label: '사용량', unit: 'Usage' }, 
+    { id: 'TOE', label: '에너지', unit: 'TOE' }, 
+    { id: 'tCO2', label: '온실가스', unit: 'tCO2' }
+];
 
-// Improved Color Palette
 const COLORS = { 
     prev: "#94a3b8", // Slate 400
     curr: "#881337", // Dark Rose
     currHighlight: "#e11d48", // Bright Rose (Latest)
-    projected: "#fbbf24", 
+    projected: "#f59e0b", // Amber 500
     mix: ["#A50034", "#F97316", "#3B82F6", "#10B981", "#6366F1"] 
 };
 
@@ -144,7 +127,7 @@ const CustomizedTreemapContent = (props) => {
 function EnergyDashboard() {
     const [buildingData, setBuildingData] = useState(null);
     const [tenantData, setTenantData] = useState(null);
-    const [viewMode, setViewMode] = useState('Tenant');
+    const [viewMode, setViewMode] = useState('Tenant'); // 'Tenant' or 'Building'
     const [selectedEntities, setSelectedEntities] = useState([]);
     const [selectedDataType, setSelectedDataType] = useState('Cost');
     const [selectedSource, setSelectedSource] = useState('전체');
@@ -161,120 +144,191 @@ function EnergyDashboard() {
     useEffect(() => { const i = setInterval(() => { if (window.Recharts && window.XLSX && window.lucide) { setIsLibLoaded(true); clearInterval(i); } }, 500); return () => clearInterval(i); }, []);
     useEffect(() => { document.documentElement.classList.toggle('dark', isDarkMode); }, [isDarkMode]);
     
-    // --- Excel Processing Logic ---
-    const processExcelData = (arrayBuffer) => {
-        const wb = XLSX.read(arrayBuffer, { type: 'array' });
-        const bData = {}, tData = {};
-        const init = (t, n) => { if (!t[n]) { t[n] = {}; DATA_TYPES.forEach(dt => { t[n][dt.id] = {}; SOURCES.forEach(s => t[n][dt.id][s] = MONTHS.map(m => ({ month: m, prev: 0, curr: 0 }))); }); } };
-        BUILDING_LIST.forEach(b => init(bData, b));
-        
-        // Sheet finding logic
-        let sheetName = wb.SheetNames.find(n => (n.includes("실적") || n.includes("에너지")) && (n.includes("년") || n.includes("20")));
-        if (!sheetName) sheetName = wb.SheetNames[0];
-
-        let detectedPrev = new Date().getFullYear() - 1;
-        let detectedCurr = new Date().getFullYear();
-
-        if (sheetName) {
-            const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1 });
-            let hIdx = -1, mIdxs = [];
-            for (let i=0; i<Math.min(rows.length,50); i++) {
-                if (rows[i] && rows[i].findIndex(c=>String(c).trim()==="1월")>-1) { 
-                    hIdx=i; 
-                    for(let m=0; m<12; m++) mIdxs.push(rows[i].findIndex(c=>String(c).trim()==="1월")+m); 
-                    break; 
-                }
-            }
-
-            const yearMatches = new Set();
-            for(let i=0; i<Math.min(rows.length, 20); i++) {
-                const rowStr = (rows[i] || []).join(" ");
-                const matches = rowStr.match(/20\d{2}/g);
-                if(matches) matches.forEach(y => yearMatches.add(parseInt(y)));
-            }
-            if(yearMatches.size >= 2) {
-                const sortedYears = Array.from(yearMatches).sort((a,b)=>a-b);
-                detectedPrev = sortedYears[sortedYears.length - 2];
-                detectedCurr = sortedYears[sortedYears.length - 1];
-            }
-            
-            if (hIdx > -1) {
-                for (let i=hIdx+1; i<rows.length; i++) {
-                    const row = rows[i]; if (!row || !row.length) continue;
-                    const meta = row.slice(0, 10).map(c=>String(c||"")).join(" ");
-                    
-                    let targetKey = 'curr';
-                    if (meta.includes(String(detectedPrev)) || meta.includes(String(detectedPrev).slice(2)+"년")) targetKey = 'prev';
-                    else if (meta.includes(String(detectedCurr)) || meta.includes(String(detectedCurr).slice(2)+"년")) targetKey = 'curr';
-                    
-                    const rFull = row.map(c=>String(c||"").toLowerCase()).join("|");
-                    let dT = null; 
-                    if(rFull.includes("비용")) dT='Cost'; 
-                    else if(rFull.includes("사용량")&&(rFull.includes("kwh")||rFull.includes("m3")||rFull.includes("㎥")||rFull.includes("mwh"))) dT='Usage'; 
-                    else if(rFull.includes("toe")) dT='TOE'; 
-                    else if(rFull.includes("tco2") || rFull.includes("온실가스")) dT='tCO2';
-                    if (!dT) continue;
-
-                    let src = "기타"; 
-                    if(rFull.includes("전력")) src="전력"; 
-                    else if(rFull.includes("가스")||rFull.includes("lng")) src="도시가스"; 
-                    else if(rFull.includes("상하수도")||rFull.includes("수도")) src="상하수도"; 
-                    else if(rFull.includes("중온수")||rFull.includes("난방")) src="중온수"; 
-                    else if(rFull.includes("재이용수")) src="재이용수";
-                    
-                    const process = (target) => {
-                        mIdxs.forEach((c, m) => {
-                            let v = row[c]; if(typeof v==='string') v=parseFloat(v.replace(/,/g,''));
-                            if(typeof v==='number' && !isNaN(v)) { 
-                                target[dT][src][m][targetKey] += v; 
-                                target[dT]['전체'][m][targetKey] += v; 
-                            }
-                        });
-                    };
-                    
-                    if (!rFull.includes("입주사")) {
-                        const mCells = row.slice(0, 10).map(c=>String(c||"").trim());
-                        const mStr = mCells.join(" ");
-                        let matchedB = BUILDING_LIST.find(b => {
-                            if (b==="DP2_2단계") return mStr.includes("DP2_2단계") || (mStr.includes("DP2")&&mStr.includes("2단계")) || mStr.includes("2차부지");
-                            if (b==="DP2") return (mCells.some(c=>c==="DP2"||(c.includes("DP2")&&!c.includes("DP2_2단계"))) && !(mStr.includes("2단계")||mStr.includes("2차")));
-                            return mCells.some(c=>c===b || (c.includes(b)&&!b.includes("DP2")));
-                        });
-                        if (matchedB) process(bData[matchedB]);
-                    }
-                    if (rFull.includes("입주사")) {
-                        let matchedT = null;
-                        for (const c of row.slice(4, 12)) {
-                            let v = String(c||"").trim(); if(!v||v==="사용량"||v==="비용") continue;
-                            if (v==="LGE_DP3") v="LG전자_DP3"; if (v==="LGE") matchedT="LG에너지솔루션";
-                            else { 
-                                const keys = Object.keys(TENANT_DISPLAY_MAPPING).sort((a,b) => b.length - a.length);
-                                const k = keys.find(k => v===k || v.startsWith(k));
-                                matchedT = k ? TENANT_DISPLAY_MAPPING[k] : (Object.values(TENANT_DISPLAY_MAPPING).includes(v) ? v : (["LG","LX","CNS"].some(p=>v.startsWith(p))?v:null)); 
-                            }
-                            if (matchedT) break;
-                        }
-                        if (matchedT) { init(tData, matchedT); process(tData[matchedT]); }
-                    }
-                }
-            }
-        }
-        
-        [bData, tData].forEach(d => Object.values(d).forEach(dt => Object.values(dt).forEach(src => Object.values(src).forEach(arr => {
-            let last = -1; arr.forEach((x,i)=>{if(x.curr>0)last=i;});
-            let sPrev=0, sCurr=0; if(last>-1) for(let k=0;k<=last;k++){sPrev+=arr[k].prev||0; sCurr+=arr[k].curr||0;}
-            let rate = sPrev>0 ? (sCurr-sPrev)/sPrev : 0;
-            arr.forEach((x,i)=>{ 
-                if(i>last) { x.curr=null; x.projected=(x.prev||0)*(1+rate); } else x.projected=null;
-                x.diff = (x.curr!==null&&x.prev!==null) ? x.curr-x.prev : 0;
+    // --- Data Processing Helpers ---
+    const initEntityData = () => {
+        const obj = {};
+        DATA_TYPES.forEach(dt => {
+            obj[dt.id] = {};
+            SOURCES.forEach(s => {
+                obj[dt.id][s] = MONTHS.map(m => ({ month: m, prev: 0, curr: 0 }));
             });
-        }))));
+        });
+        return obj;
+    };
 
-        setYears({ prev: detectedPrev, curr: detectedCurr });
-        setBuildingData(bData); setTenantData(tData); 
-        setViewMode('Tenant'); 
-        setSelectedEntities([]);
-        setIsFileUploaded(true);
+    const getDataType = (unitRaw, categoryRaw) => {
+        const str = (unitRaw + categoryRaw).toLowerCase().replace(/\s/g, '');
+        if (str.includes("비용") || str.includes("원")) return 'Cost';
+        if (str.includes("toe")) return 'TOE';
+        if (str.includes("tco2") || str.includes("온실가스") || str.includes("co2")) return 'tCO2';
+        return 'Usage'; // Default to Usage (kwh, m3, etc)
+    };
+
+    const getSourceType = (sourceRaw) => {
+        const str = sourceRaw.trim();
+        if (str.includes("전력")) return "전력";
+        if (str.includes("가스") || str.includes("LNG")) return "도시가스";
+        if (str.includes("상하수도") || str.includes("수도")) return "상하수도";
+        if (str.includes("중온수") || str.includes("지역난방")) return "중온수";
+        if (str.includes("재이용수")) return "재이용수";
+        return "기타";
+    };
+
+    // --- Core Parsing Logic (수정됨: 엄격한 조건 적용) ---
+    const processExcelData = (arrayBuffer) => {
+        try {
+            const wb = XLSX.read(arrayBuffer, { type: 'array' });
+            const sheetName = wb.SheetNames[0];
+            const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: "" });
+            
+            if (!rows || rows.length === 0) throw new Error("데이터가 비어있습니다.");
+
+            // 1. 헤더 찾기
+            let headerIdx = -1;
+            for (let i = 0; i < Math.min(rows.length, 100); i++) {
+                const rowStr = rows[i].join("").replace(/\s/g, "");
+                if (rowStr.includes("년도") && rowStr.includes("구분") && (rowStr.includes("1월") || rowStr.includes("월"))) {
+                    headerIdx = i;
+                    break;
+                }
+            }
+            if (headerIdx === -1) throw new Error("헤더를 찾을 수 없습니다. (년도, 구분, 월 컬럼 확인 필요)");
+
+            // 2. 컬럼 인덱스 매핑
+            const headerRow = rows[headerIdx].map(x => String(x).trim());
+            const col = {
+                year: headerRow.findIndex(c => c === "년도" || c === "Year"),
+                category: headerRow.findIndex(c => c === "구분"),
+                source: headerRow.findIndex(c => c === "에너지원"),
+                detail: headerRow.findIndex(c => c === "상세구분"),
+                building: headerRow.findIndex(c => c === "건물"),
+                usage: headerRow.findIndex(c => c === "사용처"),
+                tenant: headerRow.findIndex(c => c === "입주사"),
+                unit: headerRow.findIndex(c => c === "단위"),
+                mStart: -1
+            };
+
+            // 월 시작 인덱스 찾기
+            col.mStart = headerRow.findIndex(c => c === "1월" || c === "Jan");
+            if (col.mStart === -1) {
+                 col.mStart = col.unit > -1 ? col.unit + 1 : 9; 
+            }
+
+            // 3. 년도 자동 감지
+            const yearsSet = new Set();
+            for (let i = headerIdx + 1; i < rows.length; i++) {
+                const y = parseInt(rows[i][col.year]);
+                if (!isNaN(y)) yearsSet.add(y);
+            }
+            const yearsArr = Array.from(yearsSet).sort((a,b)=>a-b);
+            const yPrev = yearsArr.length >= 2 ? yearsArr[yearsArr.length-2] : (yearsArr[0]-1 || 2024);
+            const yCurr = yearsArr.length >= 1 ? yearsArr[yearsArr.length-1] : 2025;
+            
+            // 4. 데이터 적재 컨테이너
+            const bData = {}; // Building Data
+            const tData = {}; // Tenant Data
+
+            // 5. 행 반복 (엄격한 파싱 로직 적용)
+            for (let i = headerIdx + 1; i < rows.length; i++) {
+                const row = rows[i];
+                const yearVal = parseInt(row[col.year]);
+                if (isNaN(yearVal)) continue;
+
+                // 년도 구분 (Prev/Curr)
+                let yearKey = null;
+                if (yearVal === yPrev) yearKey = 'prev';
+                else if (yearVal === yCurr) yearKey = 'curr';
+                else continue;
+
+                // 문자열 값 추출 (trim만 적용하여 앞뒤 공백 제거, 중간 공백 유지)
+                const categoryStr = String(row[col.category] || "").trim();
+                const detailStr = String(row[col.detail] || "").trim();
+                const sourceStr = String(row[col.source] || "").trim();
+                const unitStr = String(row[col.unit] || "").trim();
+                const buildingStr = String(row[col.building] || "").trim();
+                const tenantStr = String(row[col.tenant] || "").trim();
+                const usageStr = String(row[col.usage] || "").trim();
+
+                // 데이터 타입 및 에너지원 판별
+                const dataType = getDataType(unitStr, categoryStr);
+                const sourceType = getSourceType(sourceStr);
+
+                // --- Case 1: 건물별 에너지실적 (엄격한 조건) ---
+                if (categoryStr === "건물별 에너지실적") {
+                    // 상세구분: "전유", "배분(전유)", "배분(공용)" 중 하나와 정확히 일치해야 함
+                    const validDetails = ["전유", "배분(전유)", "배분(공용)"];
+                    
+                    if (validDetails.includes(detailStr)) {
+                        // 건물: 예외 없음, 값 그대로 키로 사용
+                        const buildingName = buildingStr;
+                        if (!buildingName || buildingName === "-") continue;
+
+                        if (!bData[buildingName]) bData[buildingName] = initEntityData();
+
+                        for (let m = 0; m < 12; m++) {
+                            let val = row[col.mStart + m];
+                            if (typeof val === 'string') val = parseFloat(val.replace(/,/g, ''));
+                            if (isNaN(val)) val = 0;
+
+                            bData[buildingName][dataType][sourceType][m][yearKey] += val;
+                            bData[buildingName][dataType]['전체'][m][yearKey] += val;
+                        }
+                    }
+                }
+                
+                // --- Case 2: 입주사별 에너지실적 ---
+                else if (categoryStr === "입주사별 에너지실적") {
+                    let tenantName = tenantStr;
+                    // 입주사명이 비어있으면 사용처 컬럼 확인 (기존 로직 유지)
+                    if (!tenantName || tenantName === "-") {
+                        tenantName = usageStr;
+                    }
+                    if (!tenantName || tenantName === "-") continue;
+
+                    if (!tData[tenantName]) tData[tenantName] = initEntityData();
+
+                    for (let m = 0; m < 12; m++) {
+                        let val = row[col.mStart + m];
+                        if (typeof val === 'string') val = parseFloat(val.replace(/,/g, ''));
+                        if (isNaN(val)) val = 0;
+
+                        tData[tenantName][dataType][sourceType][m][yearKey] += val;
+                        tData[tenantName][dataType]['전체'][m][yearKey] += val;
+                    }
+                }
+            }
+
+            // 6. Diff 계산 (전년 대비 증감)
+            [bData, tData].forEach(dataSet => {
+                Object.values(dataSet).forEach(entityTypes => {
+                    Object.values(entityTypes).forEach(srcObj => {
+                        Object.values(srcObj).forEach(monthArr => {
+                            monthArr.forEach(d => {
+                                d.diff = d.curr - d.prev;
+                                d.projected = null; // 초기화
+                            });
+                        });
+                    });
+                });
+            });
+
+            // State 업데이트
+            setYears({ prev: yPrev, curr: yCurr });
+            setBuildingData(bData);
+            setTenantData(tData);
+            setViewMode('Tenant'); // 기본값
+            setSelectedEntities([]); // 선택 초기화
+            
+            setIsFileUploaded(true);
+            setLoading(false);
+            setLoadingMessage("");
+
+        } catch (err) {
+            console.error(err);
+            alert("파일 처리 중 오류가 발생했습니다: " + err.message);
+            setLoading(false);
+            setLoadingMessage("");
+        }
     };
 
     // --- Auto Load Data Logic ---
@@ -283,7 +337,7 @@ function EnergyDashboard() {
             if (!isLibLoaded) return;
             setLoading(true);
             setLoadingMessage("데이터 파일 탐색 중 (data 폴더 확인)...");
-            const candidates = ['./data/energy_data.xlsx', './data/data.xlsx', './data/energy.xlsx'];
+            const candidates = ['./data/energy_data.xlsx', './data/data.xlsx', './data/energy.xlsx', './data/260123.csv'];
             let loaded = false;
             for (const path of candidates) {
                 try {
@@ -298,7 +352,7 @@ function EnergyDashboard() {
                 } catch (e) { continue; }
             }
             if (!loaded) {
-                console.log("자동 로드 실패: data 폴더에 파일이 없거나 접근할 수 없습니다. (수동 업로드 대기)");
+                console.log("자동 로드 실패 (수동 업로드 대기)");
                 setLoadingMessage("");
             }
             setLoading(false);
@@ -312,9 +366,7 @@ function EnergyDashboard() {
         setLoading(true); setLoadingMessage("파일 분석 중...");
         const reader = new FileReader();
         reader.onload = (evt) => {
-            try { processExcelData(evt.target.result); } 
-            catch(e) { console.error(e); alert("파일 처리 중 오류가 발생했습니다."); } 
-            finally { setLoading(false); setLoadingMessage(""); }
+            processExcelData(evt.target.result);
         };
         reader.readAsArrayBuffer(file);
     };
@@ -328,43 +380,68 @@ function EnergyDashboard() {
         setSelectedEntities(selectedEntities.length === allKeys.length ? [] : allKeys);
     }
 
-    const selectGroup = (groupName) => {
-        const groupMembers = TENANT_GROUPS[groupName];
-        if (!groupMembers) return;
-        const availableMembers = groupMembers.filter(m => activeData && activeData[m]);
-        const allSelected = availableMembers.every(m => selectedEntities.includes(m));
-        if (allSelected) {
-            setSelectedEntities(prev => prev.filter(e => !availableMembers.includes(e)));
-        } else {
-            const newSet = new Set([...selectedEntities, ...availableMembers]);
-            setSelectedEntities(Array.from(newSet).sort());
-        }
-    };
-
     const activeData = viewMode === 'Building' ? buildingData : tenantData;
+    const entityList = useMemo(() => activeData ? Object.keys(activeData).sort() : [], [activeData]);
     
+    // --- Aggregation & Prediction Logic ---
     const aggregatedData = useMemo(() => {
         const emptyAgg = MONTHS.map(m => ({ month: m, prev: 0, curr: 0, projected: 0, count: 0 }));
         if (!activeData || selectedEntities.length === 0) return emptyAgg;
+        
         const agg = MONTHS.map((m, idx) => ({ month: m, prev: 0, curr: 0, projected: 0, count: 0 }));
+        
         selectedEntities.forEach(entity => {
             const data = activeData[entity];
             if (!data) return;
-            let targetArr = (selectedDataType === 'Usage' && selectedSource === '전체') ? data['TOE']['전체'] : data[selectedDataType][selectedSource];
+            // 선택된 데이터 타입과 소스에 따라 데이터 추출
+            const targetArr = data[selectedDataType][selectedSource];
             if (targetArr) {
                 targetArr.forEach((d, idx) => {
                     agg[idx].prev += (d.prev || 0);
                     agg[idx].curr += (d.curr || 0);
-                    agg[idx].projected += (d.projected || 0);
                 });
             }
         });
+
+        // Prediction Logic (Weather & Trend Aware)
+        let lastActualIdx = -1;
+        agg.forEach((d, i) => { if (d.curr > 0) lastActualIdx = i; });
+        
+        // 최근 3개월 추세 계산 (전년 동월 대비)
+        let trendSum = 0;
+        let trendCount = 0;
+        for (let i = Math.max(0, lastActualIdx - 2); i <= lastActualIdx; i++) {
+            if (agg[i].prev > 0) {
+                trendSum += (agg[i].curr / agg[i].prev);
+                trendCount++;
+            }
+        }
+        const recentTrendRate = trendCount > 0 ? trendSum / trendCount : 1.0;
+
+        // 예측값 채우기 (바로 다음 달만 표시)
+        agg.forEach((d, i) => {
+            if (i > lastActualIdx) {
+                d.curr = null;
+                if (i === lastActualIdx + 1) {
+                    let baseVal = d.prev || 0;
+                    // 계절성 보정 (동절기/하절기 피크)
+                    const isPeakSeason = [0, 1, 5, 6, 7, 11].includes(i); // 1,2,6,7,8,12월
+                    let finalRate = recentTrendRate;
+                    if (isPeakSeason && recentTrendRate > 1.0) finalRate *= 1.05; 
+                    d.projected = baseVal * finalRate;
+                } else {
+                    d.projected = null;
+                }
+            } else {
+                d.projected = null;
+            }
+        });
+
         return agg;
     }, [activeData, selectedEntities, selectedDataType, selectedSource]);
 
     const currentData = aggregatedData;
 
-    // Detect Latest Month Index for Chart Highlighting
     const latestMonthIndex = useMemo(() => {
         let idx = -1;
         currentData.forEach((d, i) => {
@@ -390,7 +467,7 @@ function EnergyDashboard() {
     }, [activeData, selectedEntities, selectedDataType, selectedSource]);
 
     const summary = useMemo(() => {
-        if (!currentData || !Array.isArray(currentData) || !currentData.length) return { totalPrev:0, totalCurr:0, diff:0, percent:0, projection:0, latestVal: 0, latestMonth: '-', latestDiff: 0, latestPercent: 0 };
+        if (!currentData || !Array.isArray(currentData) || !currentData.length) return { totalPrev:0, totalCurr:0, diff:0, percent:0, projection:0, latestVal: 0, latestMonth: '-', latestDiff: 0, latestPercent: 0, nextMonthName: '-', nextMonthPred: 0 };
         
         const tPrev = currentData.reduce((a,c) => a + (c.prev||0), 0);
         const tCurr_actual = currentData.reduce((a,c) => a + (c.curr||0), 0);
@@ -406,6 +483,15 @@ function EnergyDashboard() {
         const latestDiff = latestVal - latestPrev;
         const latestPercent = latestPrev ? (latestDiff / latestPrev) * 100 : 0;
 
+        // Next Month Prediction Logic
+        const nextIdx = lastIdx + 1;
+        const nextMonthObj = (nextIdx < 12) ? currentData[nextIdx] : null;
+        const nextMonthName = nextMonthObj ? nextMonthObj.month : "내년 1월";
+        const nextMonthPred = nextMonthObj ? nextMonthObj.projected : 0;
+        const nextMonthPrev = nextMonthObj ? nextMonthObj.prev : 0;
+        const nextMonthDiff = nextMonthPred - nextMonthPrev;
+        const nextMonthPercent = nextMonthPrev ? (nextMonthDiff / nextMonthPrev) * 100 : 0;
+
         return { 
             totalPrev: tPrev_ytd, 
             totalCurr: tCurr_actual, 
@@ -415,7 +501,10 @@ function EnergyDashboard() {
             latestVal,
             latestMonth,
             latestDiff,
-            latestPercent
+            latestPercent,
+            nextMonthName,
+            nextMonthPred,
+            nextMonthPercent
         };
     }, [currentData, latestMonthIndex]);
     
@@ -427,7 +516,8 @@ function EnergyDashboard() {
             if (!data) return;
             let totalPrev = 0;
             let totalCurr_proj = 0;
-            let targetArr = (selectedDataType === 'Usage' && selectedSource === '전체') ? data['TOE']['전체'] : data[selectedDataType][selectedSource];
+            const targetArr = data[selectedDataType][selectedSource];
+            
             targetArr.forEach(d => {
                 totalPrev += (d.prev || 0);
                 totalCurr_proj += (d.curr || 0) + (d.projected || 0);
@@ -435,17 +525,16 @@ function EnergyDashboard() {
             if (totalCurr_proj > 0) {
                 const rate = totalPrev ? (totalCurr_proj - totalPrev) / totalPrev : 0;
                 list.push({ 
-                    name: viewMode === 'Building' ? key : (TENANT_DISPLAY_MAPPING[key] || key), 
+                    name: key, 
                     size: totalCurr_proj, 
                     rate: rate 
                 });
             }
         });
         return list.sort((a,b) => b.size - a.size);
-    }, [activeData, selectedEntities, selectedDataType, selectedSource, viewMode]);
+    }, [activeData, selectedEntities, selectedDataType, selectedSource]);
 
     const currentUnit = useMemo(() => getUnit(selectedDataType, selectedSource), [selectedDataType, selectedSource]);
-    const entityList = useMemo(() => activeData ? Object.keys(activeData).sort() : [], [activeData]);
 
     const exportToExcel = () => {
         const safeCurrentData = Array.isArray(currentData) ? currentData : [];
@@ -468,11 +557,9 @@ function EnergyDashboard() {
                         <Icons.FileSpreadsheet className="w-10 h-10 text-white" />
                     </div>
                     <h1 className="text-3xl font-black mb-3 text-slate-800 dark:text-white">LGSP 에너지레터</h1>
-                    <p className="text-sm text-slate-500 mb-8">
-                    </p>
                     <div className="border-3 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl p-10 hover:border-brand-red hover:bg-rose-50/10 transition-all cursor-pointer group relative"
                         onDragOver={e=>e.preventDefault()} onDrop={handleFileUpload}>
-                        <input type="file" accept=".xlsx,.xls" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onChange={handleFileUpload} disabled={!isLibLoaded} />
+                        <input type="file" accept=".xlsx,.xls,.csv" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onChange={handleFileUpload} disabled={!isLibLoaded} />
                         <Icons.Upload className="w-12 h-12 mx-auto mb-4 text-slate-300 group-hover:text-brand-red transition-colors" />
                         <p className="text-base font-bold text-slate-400 group-hover:text-brand-red transition-colors">{isLibLoaded?"파일 업로드":"시스템 로딩 중..."}</p>
                     </div>
@@ -484,7 +571,8 @@ function EnergyDashboard() {
 
     return (
         <div className="flex h-screen bg-slate-100 dark:bg-slate-950 font-sans overflow-hidden text-slate-700 dark:text-slate-300">
-            <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-white dark:bg-slate-900 shadow-xl z-20 flex flex-col border-r border-slate-200 dark:border-slate-800 transition-all duration-300`}>
+            {/* Sidebar */}
+            <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-slate-100/80 dark:bg-slate-900 backdrop-blur shadow-xl z-20 flex flex-col border-r border-slate-200 dark:border-slate-800 transition-all duration-300`}>
                 <div className="p-6 pb-4 flex flex-col gap-6">
                     <div className="flex items-center gap-3 overflow-hidden">
                         <div className="min-w-[40px] w-10 h-10 bg-gradient-to-br from-brand-red to-rose-600 rounded-xl flex items-center justify-center text-white shadow-glow">
@@ -499,27 +587,17 @@ function EnergyDashboard() {
                     </div>
                     {isSidebarOpen ? (
                         <div className="space-y-3">
-                            <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
-                                <button onClick={() => { setViewMode('Tenant'); setSelectedEntities([]); }} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${viewMode === 'Tenant' ? 'bg-white dark:bg-slate-700 text-brand-red shadow-sm' : 'text-slate-500'}`}>입주사</button>
-                                <button onClick={() => { setViewMode('Building'); setSelectedEntities([]); }} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${viewMode === 'Building' ? 'bg-white dark:bg-slate-700 text-brand-red shadow-sm' : 'text-slate-500'}`}>건물</button>
+                            <div className="flex p-1 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                                <button onClick={() => { setViewMode('Tenant'); setSelectedEntities([]); }} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${viewMode === 'Tenant' ? 'bg-slate-100 dark:bg-slate-600 text-brand-red' : 'text-slate-500'}`}>입주사</button>
+                                <button onClick={() => { setViewMode('Building'); setSelectedEntities([]); }} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${viewMode === 'Building' ? 'bg-slate-100 dark:bg-slate-600 text-brand-red' : 'text-slate-500'}`}>건물</button>
                             </div>
-                            <button onClick={toggleAllEntities} className="w-full py-2 text-xs font-bold border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-2">
+                            <button onClick={toggleAllEntities} className="w-full py-2 text-xs font-bold border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-2 shadow-sm">
                                 {selectedEntities.length === entityList.length ? <Icons.CheckSquare className="w-4 h-4 text-brand-red"/> : <Icons.Square className="w-4 h-4"/>}
                                 {selectedEntities.length === entityList.length ? "전체 해제" : "전체 선택"}
                             </button>
-                            {viewMode === 'Tenant' && (
-                                <div className="grid grid-cols-2 gap-2">
-                                    {Object.keys(TENANT_GROUPS).map(gName => (
-                                        <button key={gName} onClick={() => selectGroup(gName)} className="py-2 text-[10px] font-bold border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-1">
-                                            <Icons.Layers className="w-3 h-3"/>
-                                            {gName}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
                         </div>
                     ) : (
-                        <button onClick={() => setIsSidebarOpen(true)} className="p-2 mx-auto bg-slate-100 dark:bg-slate-800 rounded-lg text-brand-red"><Icons.Users className="w-5 h-5"/></button>
+                        <button onClick={() => setIsSidebarOpen(true)} className="p-2 mx-auto bg-white dark:bg-slate-800 rounded-lg text-brand-red border border-slate-200 dark:border-slate-700"><Icons.Users className="w-5 h-5"/></button>
                     )}
                 </div>
                 <div className="flex-1 overflow-y-auto px-4 pb-4 custom-scrollbar space-y-1">
@@ -527,25 +605,26 @@ function EnergyDashboard() {
                         const isSelected = selectedEntities.includes(name);
                         return (
                             <button key={name} onClick={() => toggleEntity(name)}
-                                className={`w-full text-left px-4 py-3 rounded-xl text-sm font-semibold transition-all flex items-center gap-3 group border ${isSelected ? 'bg-gradient-to-r from-brand-red to-rose-600 text-white shadow-md border-transparent' : 'bg-white dark:bg-slate-900 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500'}`}>
+                                className={`w-full text-left px-4 py-3 rounded-xl text-sm font-semibold transition-all flex items-center gap-3 group border ${isSelected ? 'bg-white dark:bg-slate-800 text-brand-red shadow-md border-rose-100 dark:border-slate-600 ring-1 ring-rose-100 dark:ring-0' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50 border-transparent'}`}>
                                 {isSelected ? <Icons.CheckSquare className="w-4 h-4 shrink-0"/> : <Icons.Square className="w-4 h-4 shrink-0 opacity-50"/>}
-                                {isSidebarOpen && <span className="truncate">{viewMode === 'Building' ? name : (TENANT_DISPLAY_MAPPING[name] || name)}</span>}
+                                {isSidebarOpen && <span className="truncate">{name}</span>}
                             </button>
                         );
                     })}
                 </div>
                 <div className="p-4 border-t border-slate-200 dark:border-slate-800">
-                     <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="w-full py-2 flex items-center justify-center text-slate-400 hover:text-brand-red transition-colors">
+                      <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="w-full py-2 flex items-center justify-center text-slate-400 hover:text-brand-red transition-colors">
                         {isSidebarOpen ? <Icons.ChevronLeft className="w-5 h-5" /> : <Icons.ChevronRight className="w-5 h-5" />}
                     </button>
                 </div>
             </aside>
 
+            {/* Main Content */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
                 <header className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 h-16 flex items-center justify-between px-8 sticky top-0 z-30 shadow-sm">
                     <div className="flex items-center gap-3 min-w-fit">
                         <h2 className="text-xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-3">
-                            {selectedEntities.length > 1 ? `${selectedEntities.length}개 항목 선택됨` : (selectedEntities.length === 1 ? (TENANT_DISPLAY_MAPPING[selectedEntities[0]] || selectedEntities[0]) : "선택 안됨")}
+                            {selectedEntities.length > 1 ? `${selectedEntities.length}개 항목 선택됨` : (selectedEntities.length === 1 ? selectedEntities[0] : "선택 안됨")}
                             <span className="bg-rose-50 dark:bg-rose-900/30 text-brand-red dark:text-rose-400 text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-widest border border-rose-100 dark:border-rose-800">
                                 {viewMode === 'Building' ? '건물' : '입주사'}
                             </span>
@@ -580,7 +659,6 @@ function EnergyDashboard() {
 
                 <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-slate-50/50 dark:bg-slate-950">
                     <div className="max-w-[1600px] mx-auto space-y-6 pb-20">
-                        
                         {/* Smart Insight Banner */}
                         <div className={`w-full p-4 rounded-xl border flex items-start gap-3 animate-fade-in-up ${summary.percent > 5 ? 'bg-orange-50 border-orange-200 text-orange-800' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
                             {summary.percent > 5 ? <Icons.AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" /> : <Icons.CheckCircle className="w-5 h-5 shrink-0 mt-0.5" />}
@@ -619,7 +697,7 @@ function EnergyDashboard() {
                                 </div>
                             </div>
 
-                            {/* Card 2: Current Month Metric (Highlighted) */}
+                            {/* Card 2: Current Month Metric */}
                             <div className="rounded-[2rem] bg-emerald-50/50 dark:bg-emerald-900/10 p-5 border border-emerald-200 dark:border-emerald-800 shadow-lg ring-2 ring-emerald-500/20 card-hover group relative overflow-hidden">
                                 <div className="absolute top-0 right-0 p-4 opacity-10">
                                     <Icons.Calendar className="w-20 h-20 text-emerald-500" />
@@ -635,17 +713,20 @@ function EnergyDashboard() {
                                 </p>
                             </div>
 
-                            {/* Card 3: Projection */}
-                            <div className="rounded-[2rem] bg-white dark:bg-slate-800 p-5 border border-slate-100 dark:border-slate-700 shadow-card card-hover group">
+                            {/* Card 3: Next Month Prediction */}
+                            <div className="rounded-[2rem] bg-white dark:bg-slate-800 p-5 border border-amber-200 dark:border-amber-900 shadow-card card-hover group ring-1 ring-amber-500/30">
                                 <div className="flex justify-between items-center mb-4">
-                                    <h3 className="text-sm font-bold text-slate-500">연말 예상</h3>
-                                    <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-blue-500"><Icons.TrendingUp className="w-5 h-5" /></div>
+                                    <h3 className="text-sm font-bold text-slate-600 dark:text-amber-100">다음 달({summary.nextMonthName}) 예상</h3>
+                                    <div className="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-amber-500"><Icons.CloudSun className="w-5 h-5" /></div>
                                 </div>
-                                <h3 className="text-3xl font-black text-slate-800 dark:text-white"><AnimatedNumber value={summary.projection} formatter={(v) => formatValue(v, selectedDataType)} /></h3>
-                                <div className="w-full bg-slate-100 rounded-full h-1.5 mt-4 overflow-hidden">
-                                    <div className="bg-blue-500 h-full rounded-full" style={{width: '75%'}}></div>
+                                <h3 className="text-3xl font-black text-slate-800 dark:text-white"><AnimatedNumber value={summary.nextMonthPred} formatter={(v) => formatValue(v, selectedDataType)} /></h3>
+                                <div className="flex items-center gap-2 mt-2">
+                                     <p className={`text-xs font-bold ${summary.nextMonthPercent > 0 ? 'text-brand-red' : 'text-emerald-600'}`}>
+                                         {summary.nextMonthPercent > 0 ? '+' : ''}{summary.nextMonthPercent.toFixed(1)}% (전년 대비)
+                                     </p>
+                                     <span className="text-[10px] text-slate-400 border border-slate-200 rounded px-1">서울 날씨 반영</span>
                                 </div>
-                                <p className="text-xs text-slate-400 mt-2 text-right">진척률 (예상)</p>
+                                <p className="text-[10px] text-slate-400 mt-1 opacity-80">최근 추세 및 마곡동 기온(하/동절기) 반영 알고리즘</p>
                             </div>
 
                             {/* Card 4: Gap Analysis */}
@@ -672,7 +753,6 @@ function EnergyDashboard() {
                                     <div className="flex gap-3 text-xs font-bold">
                                         <div className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400"></span> {years.prev}년</div>
                                         <div className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-[#881337]"></span> {years.curr}년</div>
-                                        <div className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-brand-rose shadow-lg shadow-rose-500/50"></span> 당월(강조)</div>
                                         <div className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span> 예상</div>
                                     </div>
                                 </div>
@@ -684,10 +764,8 @@ function EnergyDashboard() {
                                             <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize:11}} tickFormatter={(val)=>formatValue(val,selectedDataType)} width={60} />
                                             <Tooltip formatter={(val)=>formatValue(val,selectedDataType)} contentStyle={{borderRadius:'12px', border:'none', boxShadow:'0 10px 15px -3px rgba(0, 0, 0, 0.1)'}} cursor={{fill:'transparent'}} />
                                             
-                                            {/* Previous Year Area */}
                                             <Area type="monotone" dataKey="prev" name={`${years.prev}년`} stroke={COLORS.prev} fill={COLORS.prev} fillOpacity={0.2} strokeWidth={2} dot={false} />
                                             
-                                            {/* Current Year Bar with Highlight Logic */}
                                             <Bar dataKey="curr" name={`${years.curr}년`} radius={[4,4,0,0]} barSize={24}>
                                                 {currentData.map((entry, index) => {
                                                     const isLatest = index === latestMonthIndex;
@@ -703,7 +781,6 @@ function EnergyDashboard() {
                                                 })}
                                             </Bar>
                                             
-                                            {/* Projected Bar */}
                                             <Bar dataKey="projected" name="예상" fill={COLORS.projected} radius={[4,4,0,0]} barSize={24} />
                                         </ComposedChart>
                                     </ResponsiveContainer>
@@ -807,31 +884,31 @@ function EnergyDashboard() {
                                 <div className="w-full">
                                     <table className="w-full text-right table-fixed border-collapse compact-table">
                                         <thead>
-                                            <tr className="text-[10px] md:text-xs text-slate-500 border-b border-slate-200 dark:border-slate-700">
-                                                <th className="py-2 px-1 text-left font-bold w-[8%] bg-slate-50 dark:bg-slate-900">구분</th>
+                                            <tr className="text-sm md:text-base text-slate-600 border-b-2 border-slate-200 dark:border-slate-600">
+                                                <th className="py-4 px-2 text-left font-black w-[10%] bg-slate-50 dark:bg-slate-900">구분</th>
                                                 {MONTHS.map(m => (
-                                                    <th key={m} className="py-2 px-1 font-medium w-[7%] text-center text-slate-400">{m.replace('월','')}</th>
+                                                    <th key={m} className="py-4 px-1 font-bold w-[7%] text-center text-slate-500">{m.replace('월','')}</th>
                                                 ))}
-                                                <th className="py-2 px-1 font-bold text-slate-700 dark:text-slate-300 w-[8%] bg-slate-50/50 dark:bg-slate-800/50">Total</th>
+                                                <th className="py-4 px-2 font-black text-slate-800 dark:text-slate-200 w-[10%] bg-slate-50/50 dark:bg-slate-800/50">Total</th>
                                             </tr>
                                         </thead>
-                                        <tbody className="text-[10px] md:text-xs font-medium text-slate-600 dark:text-slate-400 divide-y divide-slate-100 dark:divide-slate-800">
+                                        <tbody className="text-xs md:text-sm font-medium text-slate-600 dark:text-slate-400 divide-y divide-slate-100 dark:divide-slate-800">
                                             {/* Prev Year Row */}
                                             <tr className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                                                <td className="py-2 px-1 text-left font-bold text-slate-500">{years.prev}</td>
+                                                <td className="py-4 px-2 text-left font-bold text-slate-500">{years.prev}년</td>
                                                 {currentData.map((d, i) => (
-                                                    <td key={i} className="py-2 px-1 tabular-nums tracking-tight text-center opacity-80 group-hover:opacity-100">
+                                                    <td key={i} className="py-4 px-1 tabular-nums tracking-tight text-center opacity-80 group-hover:opacity-100">
                                                         {formatValue(d.prev, selectedDataType)}
                                                     </td>
                                                 ))}
-                                                <td className="py-2 px-1 font-bold text-slate-800 dark:text-slate-200 bg-slate-50/30 dark:bg-slate-800/30">
+                                                <td className="py-4 px-2 font-bold text-slate-800 dark:text-slate-200 bg-slate-50/30 dark:bg-slate-800/30">
                                                     {formatValue(summary.totalPrev, selectedDataType)}
                                                 </td>
                                             </tr>
                                             
                                             {/* Curr Year Row */}
                                             <tr className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                                                <td className="py-2 px-1 text-left font-black text-brand-red">{years.curr}</td>
+                                                <td className="py-4 px-2 text-left font-black text-brand-red">{years.curr}년</td>
                                                 {currentData.map((d, i) => {
                                                     const val = d.curr !== null ? d.curr : d.projected;
                                                     const isProj = d.curr === null;
@@ -846,31 +923,51 @@ function EnergyDashboard() {
                                                     if (isProj) cellClass = "text-amber-500 italic";
 
                                                     return (
-                                                        <td key={i} className="py-2 px-1 text-center">
-                                                            <div className={`py-0.5 px-1 ${cellClass} tabular-nums tracking-tight inline-block w-full`}>
+                                                        <td key={i} className="py-4 px-1 text-center">
+                                                            <div className={`py-1 px-1 ${cellClass} tabular-nums tracking-tight inline-block w-full`}>
                                                                 {formatValue(val, selectedDataType)}
                                                             </div>
                                                         </td>
                                                     )
                                                 })}
-                                                <td className="py-2 px-1 font-black text-brand-red bg-slate-50/30 dark:bg-slate-800/30">
+                                                <td className="py-4 px-2 font-black text-brand-red bg-slate-50/30 dark:bg-slate-800/30">
                                                     {formatValue(summary.projection, selectedDataType)}
                                                 </td>
                                             </tr>
                                             
+                                            {/* Growth Rate Row */}
+                                            <tr className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors bg-slate-50/30">
+                                                <td className="py-4 px-2 text-left font-bold text-slate-500">증감율(%)</td>
+                                                {currentData.map((d, i) => {
+                                                    const val = d.curr !== null ? d.curr : d.projected;
+                                                    const diff = val - (d.prev || 0);
+                                                    const rate = (d.prev && d.prev !== 0) ? (diff / d.prev) * 100 : 0;
+                                                    const isProj = d.curr === null;
+                                                    
+                                                    return (
+                                                        <td key={i} className={`py-4 px-1 text-center tabular-nums text-xs ${rate > 0 ? 'text-brand-red' : 'text-emerald-500'} ${isProj ? 'opacity-50' : ''}`}>
+                                                            {rate > 0 ? '+' : ''}{rate.toFixed(1)}%
+                                                        </td>
+                                                    )
+                                                })}
+                                                <td className={`py-4 px-2 font-bold text-right ${summary.percent > 0 ? 'text-brand-red' : 'text-emerald-500'}`}>
+                                                    {summary.percent > 0 ? '+' : ''}{summary.percent.toFixed(1)}%
+                                                </td>
+                                            </tr>
+
                                             {/* Gap Row */}
                                             <tr className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-t border-slate-200 dark:border-slate-700 border-dashed">
-                                                <td className="py-2 px-1 text-left font-bold text-slate-400 text-[9px]">Gap</td>
+                                                <td className="py-4 px-2 text-left font-bold text-slate-400">차이(Gap)</td>
                                                 {currentData.map((d, i) => {
                                                     const val = d.curr !== null ? d.curr : d.projected;
                                                     const diff = val - (d.prev || 0);
                                                     return (
-                                                        <td key={i} className={`py-2 px-1 text-center text-[9px] tabular-nums tracking-tight ${diff > 0 ? 'text-brand-red' : 'text-emerald-500'}`}>
+                                                        <td key={i} className={`py-4 px-1 text-center tabular-nums tracking-tight ${diff > 0 ? 'text-brand-red' : 'text-emerald-500'}`}>
                                                             {diff > 0 ? '+' : ''}{formatValue(diff, selectedDataType)}
                                                         </td>
                                                     )
                                                 })}
-                                                <td className={`py-2 px-1 text-[9px] font-bold text-right ${summary.diff > 0 ? 'text-brand-red' : 'text-emerald-500'}`}>
+                                                <td className={`py-4 px-2 font-bold text-right ${summary.diff > 0 ? 'text-brand-red' : 'text-emerald-500'}`}>
                                                     {summary.diff > 0 ? '+' : ''}{formatValue(summary.diff, selectedDataType)}
                                                 </td>
                                             </tr>
