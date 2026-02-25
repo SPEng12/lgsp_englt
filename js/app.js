@@ -500,7 +500,7 @@ function EnergyDashboard() {
     }, [activeData, selectedEntities, selectedDataType, selectedSource]);
 
     const summary = useMemo(() => {
-        if (!currentData || !Array.isArray(currentData) || !currentData.length) return { totalPrev:0, totalCurr:0, diff:0, percent:0, projection:0, latestVal: 0, latestMonth: '-', latestDiff: 0, latestPercent: 0, nextMonthName: '-', nextMonthPred: 0 };
+        if (!currentData || !Array.isArray(currentData) || !currentData.length) return { totalPrev:0, totalCurr:0, diff:0, percent:0, projection:0, latestVal: 0, latestMonth: '-', latestDiff: 0, latestPercent: 0, nextMonthName: '-', nextMonthPred: 0, totalPrevFull: 0 };
         
         const tPrev = currentData.reduce((a,c) => a + (c.prev||0), 0);
         const tCurr_actual = currentData.reduce((a,c) => a + (c.curr||0), 0);
@@ -525,8 +525,9 @@ function EnergyDashboard() {
         const nextMonthPercent = nextMonthPrev ? (nextMonthDiff / nextMonthPrev) * 100 : 0;
 
         return { 
-            totalPrev: tPrev_ytd, 
-            totalCurr: tCurr_actual, 
+            totalPrevFull: tPrev, // 전년도 1~12월 전체 합산
+            totalPrev: tPrev_ytd, // 전년도 YTD 합산 (증감률 계산용 등)
+            totalCurr: tCurr_actual, // 당해년도 실제 실적 누적 합산
             diff: tCurr_actual - tPrev_ytd, 
             percent: tPrev_ytd ? (tCurr_actual - tPrev_ytd)/tPrev_ytd*100 : 0, 
             projection: tCurr_proj_total,
@@ -591,8 +592,9 @@ function EnergyDashboard() {
         const safeCurrentData = Array.isArray(currentData) ? currentData : [];
         const wsData = [
             ["구분", ...MONTHS, "합계"],
-            [`${years.prev}년`, ...safeCurrentData.map(d => d.prev), summary.totalPrev],
-            [`${years.curr}년`, ...safeCurrentData.map(d => d.curr || d.projected), summary.projection]
+            // 화면과 동일하게 전년도 전체합, 당년도 당월누적합 반영
+            [`${years.prev}년`, ...safeCurrentData.map(d => d.prev), summary.totalPrevFull],
+            [`${years.curr}년`, ...safeCurrentData.map(d => d.curr !== null ? d.curr : d.projected), summary.totalCurr]
         ];
         const ws = XLSX.utils.aoa_to_sheet(wsData);
         const wb = XLSX.utils.book_new();
@@ -988,7 +990,7 @@ function EnergyDashboard() {
                                                     </td>
                                                 ))}
                                                 <td className="py-4 px-2 font-bold text-slate-800 dark:text-slate-200 bg-slate-50/30 dark:bg-slate-800/30">
-                                                    {formatValue(summary.totalPrev, selectedDataType)}
+                                                    {formatValue(summary.totalPrevFull, selectedDataType)}
                                                 </td>
                                             </tr>
                                             
@@ -1017,7 +1019,7 @@ function EnergyDashboard() {
                                                     )
                                                 })}
                                                 <td className="py-4 px-2 font-black text-brand-red bg-slate-50/30 dark:bg-slate-800/30">
-                                                    {formatValue(summary.projection, selectedDataType)}
+                                                    {formatValue(summary.totalCurr, selectedDataType)}
                                                 </td>
                                             </tr>
                                             
