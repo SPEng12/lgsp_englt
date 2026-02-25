@@ -540,14 +540,19 @@ function EnergyDashboard() {
         };
     }, [currentData, latestMonthIndex]);
     
+    // --- [수정 부분] Treemap Data 계산식 개선 ---
     const treemapData = useMemo(() => {
         if (!activeData || selectedEntities.length === 0) return [];
         const list = [];
+
+        // 실적이 입력된 최신 월을 기준으로 누적 비교 (데이터가 아예 없으면 기본 11로 설정)
+        const maxIndex = latestMonthIndex > -1 ? latestMonthIndex : 11;
+
         selectedEntities.forEach(key => {
             const data = activeData[key];
             if (!data) return;
             let totalPrev = 0;
-            let totalCurr_proj = 0;
+            let totalCurr = 0;
             
             // Logic Update: If Usage & Total -> Use 'TOE' '전체' data
             let targetArr;
@@ -558,23 +563,27 @@ function EnergyDashboard() {
             }
 
             if (targetArr) {
-                targetArr.forEach(d => {
-                    totalPrev += (d.prev || 0);
-                    totalCurr_proj += (d.curr || 0) + (d.projected || 0);
-                });
+                // 당해 실적이 있는 월까지만 YTD(Year to Date) 기준으로 누적 비교 처리
+                for (let i = 0; i <= maxIndex; i++) {
+                    const d = targetArr[i];
+                    if (d) {
+                        totalPrev += (d.prev || 0);
+                        totalCurr += (d.curr || 0);
+                    }
+                }
 
-                if (totalCurr_proj > 0) {
-                    const rate = totalPrev ? (totalCurr_proj - totalPrev) / totalPrev : 0;
+                if (totalCurr > 0) {
+                    const rate = totalPrev ? (totalCurr - totalPrev) / totalPrev : 0;
                     list.push({ 
                         name: key, 
-                        size: totalCurr_proj, 
+                        size: totalCurr, 
                         rate: rate 
                     });
                 }
             }
         });
         return list.sort((a,b) => b.size - a.size);
-    }, [activeData, selectedEntities, selectedDataType, selectedSource]);
+    }, [activeData, selectedEntities, selectedDataType, selectedSource, latestMonthIndex]);
 
     const currentUnit = useMemo(() => getUnit(selectedDataType, selectedSource), [selectedDataType, selectedSource]);
 
@@ -930,7 +939,7 @@ function EnergyDashboard() {
                                                                 <p className="font-bold text-slate-800 dark:text-white mb-1">{d.name}</p>
                                                                 <p className="text-xs text-slate-500">규모: {formatValue(d.size, selectedDataType)}</p>
                                                                 <p className={`text-xs font-bold ${d.rate > 0 ? 'text-brand-red' : 'text-emerald-600'}`}>
-                                                                    전년비: {d.rate > 0 ? '+' : ''}{(d.rate * 100).toFixed(1)}%
+                                                                    YTD 전년비: {d.rate > 0 ? '+' : ''}{(d.rate * 100).toFixed(1)}%
                                                                 </p>
                                                             </div>
                                                         );
